@@ -18,7 +18,9 @@ Same tools are exposed through stdio and Streamable HTTP at /mcp.
 - internal/transport/stdio.go: SDK StdioTransport.
 - internal/auth/auth.go: bearer middleware, constant-time digests, Identity(ctx) accessor.
 - internal/transport/http.go: /mcp handler, HTTP lifecycle and timeouts.
-- internal/tools/register.go: shared handler dependencies and typed tool registration.
+- internal/tools/register.go: shared dependencies, typed registration, audit middleware.
+- internal/audit: best-effort mutex-serialized JSON lines; injected stderr writer.
+- internal/tools/auditing.go: lifecycle wrapper and per-tool metadata allowlists.
 - internal/tools/system.go: hostname, /etc/os-release, kernel and uptime from /proc.
 - internal/tools/services.go: validated systemctl/journalctl calls, journal diagnostics.
 - internal/tools/commands.go: run_command input, policy check, executor call.
@@ -76,26 +78,16 @@ go build -trimpath -o bin/demo-client ./demo/cmd/client
 ./bin/shell-mcp --transport=http --listen=127.0.0.1:8080
 ```
 
-Remote host startup (behind a same-host HTTPS reverse proxy):
-
-```sh
-./bin/shell-mcp --transport=http --listen=127.0.0.1:8080
-```
-
 Remote client endpoint: https://mcp.example.com/mcp (replace proxy hostname).
-Local HTTP endpoint: http://127.0.0.1:8080/mcp.
 Commands execute on the server host; HTTP does not use SSH. Each remote host
 needs its own running server. See README for verified VS Code .vscode/mcp.json
 examples (servers object, stdio command/args/env, HTTP type/url).
-Enable demo writes by setting SHELL_MCP_ALLOW_WRITE=true on the server process.
 
 Demo client: stdio starts a child; HTTP connects to an existing endpoint.
 --transport defaults stdio; --server required for stdio; --url required for HTTP.
 --action defaults list (all pages); call requires --tool; --arguments defaults {}.
 --timeout defaults 15s for initialization and each operation; must be positive.
 Prints full JSON schemas/results; errors and nonzero process results exit nonzero.
-No LLM or automatic writes. Child inherits environment; SDK Close reaps it.
-Remote CLI: ./bin/demo-client --transport=http --url=https://mcp.example.com/mcp
 
 ## Restrictions and limitations
 
@@ -118,7 +110,7 @@ Remote CLI: ./bin/demo-client --transport=http --url=https://mcp.example.com/mcp
 - Remote use requires HTTPS via proxy; plain HTTP is for localhost testing only.
 - Client uses SDK HTTPClient with a bearer RoundTripper and rejects redirects.
 - Never expose directly to the internet; restrict firewall access to intended clients.
-- Single shared identity only; no user accounts, roles, concurrency limits, or audit logs.
+- Single shared identity only; no user accounts, roles, or concurrency limits.
 - Tests use temp directories; do not restart services or change system configuration.
 
 ## Extension instructions
@@ -130,11 +122,28 @@ Remote CLI: ./bin/demo-client --transport=http --url=https://mcp.example.com/mcp
 - Policy rule: modify internal/policy, test acceptance/rejection cases; executor stays generic.
 - Update README and this guide when configuration, commands, or capabilities change.
 
+## Auditing (implemented)
+
+Events: authentication_failed, tool_denied, tool_started, tool_completed.
+Fields: UTC RFC3339Nano timestamp, random request_id (not session ID), user_id,
+transport, tool, sanitized arguments, status, exit_code, duration_ms, safe reason.
+Start/completion share an ID; monotonic duration. No completion invented on crash.
+HTTP demo-user is a shared-token identity, not a person; stdio uses the OS account.
+Auth failures have no verified identity. No client-supplied identity is trusted.
+No outputs, raw errors/bodies, headers, tokens, environment, or file contents.
+Service/path values redacted; safe flags only; strings <=128 bytes, args <=16.
+Restrict log access: paths/service names can be sensitive. Logs are not durable,
+tamper-proof, or guaranteed; writer failures never alter results.
+Inspect: redirect stderr to audit.log; jq -R 'fromjson? | select(.event)' audit.log.
+Systemd: journalctl -u YOUR_UNIT -o cat; stderr must go to journald. README has example.
+New tool: add metadata allowlist, validate/policy-check, then startOperation(ctx);
+commandOutcome records process status. Shared middleware logs completion/denial.
+
 ## Future ideas (not implemented)
 
 - Built-in TLS remains future work in internal/transport/http.go.
 - auth.Identity(ctx) could support future per-user policy checks.
-- Audit logging can wrap handlers at internal/tools/register.go.
+- Durable audit storage remains future work; current stderr logging is best-effort.
 - No OAuth, RBAC, database, or plugin framework currently exists.
 
 Future LLM adapters can reuse demo/internal/mcpclient schemas and results; keep

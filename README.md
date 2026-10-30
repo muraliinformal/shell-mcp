@@ -349,7 +349,8 @@ This is a learning project, not production-grade isolation.
 - HTTP authentication uses one shared token and identifies every authenticated
   request as `demo-user`. There are no user accounts, roles, or per-user rules.
   Token checks use constant-time comparison. Tokens and headers are never logged.
-- There is no built-in TLS, audit trail, or limit on simultaneous tool calls.
+- There is no built-in TLS or limit on simultaneous tool calls. Audit events are
+  best-effort stderr records, not a durable audit trail.
 
 <details>
 <summary>More details about execution and HTTP connections</summary>
@@ -369,6 +370,70 @@ paths specific to the author's machine.
 
 </details>
 
+## Read the audit events
+
+The server writes one JSON audit event per line to **stderr**, leaving stdout for
+MCP messages. Events show who requested a tool, whether it was allowed, and how
+it finished. Ordinary startup messages also use stderr.
+
+| Event | Meaning |
+| --- | --- |
+| `authentication_failed` | An HTTP request was rejected before MCP could handle it. |
+| `tool_denied` | Invalid input, an unknown tool, or execution policy rejected a call. No operation started. |
+| `tool_started` | Validation passed and the operation is about to begin. |
+| `tool_completed` | An operation finished, including errors, timeouts, and cancellation. |
+
+Each event includes a UTC `timestamp` (RFC3339Nano), `event`, a random server-generated
+`request_id`, and `transport`. Tool events include `tool`, sanitized `arguments`,
+and `user_id` when known. Start/completion share one request ID; it is not an MCP
+session ID. Completion includes `duration_ms`, measured with a monotonic clock,
+and a `status`: `success`, `error`, `timeout`, or `cancelled`. Denials use `denied`.
+When applicable, events include `exit_code` and a fixed safe `reason` code.
+
+For example, this sanitized completion records a failed disk-space command:
+
+```json
+{"timestamp":"2026-01-01T12:00:00Z","event":"tool_completed","request_id":"0123456789abcdef0123456789abcdef","user_id":"demo-user","transport":"http","tool":"run_command","arguments":{"executable":"/usr/bin/df","args":["[redacted]"]},"status":"error","exit_code":1,"duration_ms":4,"reason":"command_nonzero_exit"}
+```
+
+HTTP uses the authenticated context identity `demo-user`. It represents everyone
+using the shared token, **not an identified individual**. Stdio records the local
+OS username (or a numeric UID fallback), identifying the server's execution
+account. Client-supplied identities are ignored. Authentication failures have no
+verified user ID and use their own request ID; tokens and request headers are
+never included.
+
+To inspect events from a local demo call (requires `jq` for filtering):
+
+```sh
+umask 077
+./bin/demo-client --transport=stdio --server=./bin/shell-mcp \
+  --action=call --tool=system_info 2>audit.log
+jq -R 'fromjson? | select(.event != null)' audit.log
+```
+
+If deployed as a systemd service with stderr sent to the journal, use your actual
+unit name in place of `shell-mcp.service`:
+
+```sh
+journalctl -u shell-mcp.service --no-pager -o cat | \
+  jq -R 'fromjson? | select(.event != null)'
+```
+
+Audit metadata uses a separate field allowlist for each tool. Service names and
+paths are redacted, as are command arguments except recognized safe read-command
+flags. Strings are limited to 128 bytes and argument lists to 16 entries. Command
+output, file contents, environment variables, raw HTTP bodies, and raw errors
+are never included. Treat even paths and service names as potentially sensitive
+when extending the metadata. Restrict access to audit files and journal entries.
+
+Logging is best-effort: writer or encoding failures do not change tool results.
+Stderr is not durable or tamper-proof and does not guarantee delivery. There is
+no queue, database, rotation, or external logging service. A start without a
+completion may indicate a crash; the server does not invent completion events
+when a process terminates. A nonzero command exit is recorded as an error even
+when MCP returns it as normal result data, such as an inactive service status.
+
 ## Find your way around the code
 
 | Location | Responsibility |
@@ -378,6 +443,7 @@ paths specific to the author's machine.
 | `internal/server` | Create the MCP server and register tools. |
 | `internal/transport` | Handle stdio and HTTP connections. |
 | `internal/auth` | Check HTTP tokens and attach the authenticated identity. |
+| `internal/audit` | Write bounded JSON audit events safely from concurrent requests. |
 | `internal/tools` | Validate tool inputs and coordinate the work. |
 | `internal/policy` | Decide which commands and paths are allowed. |
 | `internal/executor` | Run processes and capture their output. |
@@ -396,12 +462,21 @@ operations, and argument schemas generated from Go structs.
 
 To add a tool, create its input/output structs and handler in `internal/tools`,
 then register it in `register.go`. Add any required policy checks and tests.
+Auditing is shared through SDK middleware in `internal/tools/auditing.go`.
+For a new tool, add an explicit metadata allowlist in `auditArguments`, perform
+validation and policy checks, then call `startOperation(ctx)` immediately before
+work begins. For process results call `commandOutcome`; use a fixed safe code
+with `operationError` when needed. The middleware records denials and completion
+without logging raw errors or results. Inject the same audit logger into tools
+and HTTP authentication; keep authentication separate from execution policy.
+
 To allow another executable through `run_command`, update
 `internal/policy/policy.go`, review which arguments should be accepted, and update
 its tests. Rebuild the binary and restart any running HTTP server afterward.
 
-Future additions have clear places: TLS in the HTTP transport, per-user rules in
-policy using `auth.Identity(ctx)`, and audit logging around tool calls. Additional
+Future additions have clear places: TLS in the HTTP transport and per-user rules
+in policy using `auth.Identity(ctx)`. Audit logging is already implemented around
+tool calls and failed HTTP authentication. Additional
 transports can reuse `internal/server.New`. The demo client preserves tool
 schemas and results for a future LLM adapter; no LLM provider or agent loop is
 implemented. There is no OAuth, user registration, database, or plugin framework.
@@ -416,6 +491,8 @@ go test ./...
 
 Tests cover command restrictions, workspace validation, timeouts, output limits,
 HTTP tokens, redirect protection, and discovery/calls through both transports.
+Audit tests cover lifecycle IDs, redaction, denials, failure statuses, concurrency,
+and writer failures. Run `go test -race ./...` to check for data races too.
 Write tests use temporary folders. Tests do not restart services or change system
 configuration; journal access still depends on the target machine's permissions.
 

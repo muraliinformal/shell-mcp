@@ -37,7 +37,7 @@ func TestDiscoveryAndCalls(t *testing.T) {
 			return nil, output{Value: in.Value}, nil
 		})
 	}
-	handler, err := auth.Middleware("test-token", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{PropagateRequestCancellation: true}))
+	handler, err := auth.Middleware("test-token", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{PropagateRequestCancellation: true}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ func TestMiddleware(t *testing.T) {
 			t.Fatal("missing identity")
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestMiddleware(t *testing.T) {
 		t.Fatal("duplicate headers accepted")
 	}
 	for _, token := range []string{"", " ", "bad\ntoken"} {
-		if _, err := Middleware(token, http.NotFoundHandler()); err == nil {
+		if _, err := Middleware(token, http.NotFoundHandler(), nil); err == nil {
 			t.Fatal("invalid configured token accepted")
 		}
 	}

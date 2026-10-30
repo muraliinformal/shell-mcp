@@ -18,6 +18,8 @@ func (t *Tools) RunCommand(ctx context.Context, _ *mcp.CallToolRequest, in Comma
 	if err != nil {
 		return nil, executor.Result{}, err
 	}
+	startOperation(ctx)
 	result, err := t.Runner.Run(ctx, in.Executable, args, dir)
+	commandOutcome(ctx, result, err)
 	return nil, result, err
 }

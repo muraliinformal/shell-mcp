@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"example.com/shell-mcp/internal/audit"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"os/user"
 	"syscall"
 
 	"example.com/shell-mcp/internal/config"
@@ -35,10 +38,15 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	s := server.New(p, executor.Runner{})
+	logger := audit.New(os.Stderr)
+	localUser := fmt.Sprintf("uid:%d", os.Getuid())
+	if account, err := user.Current(); err == nil {
+		localUser = account.Username
+	}
+	s := server.New(p, executor.Runner{}, logger, c.Transport, localUser)
 	if c.Transport == "http" {
 		log.Printf("serving MCP at http://%s/mcp", c.Listen)
-		return transport.HTTP(ctx, s, c.Listen, c.APIToken)
+		return transport.HTTP(ctx, s, c.Listen, c.APIToken, logger)
 	}
 	log.Print("serving MCP over stdio")
 	err = transport.Stdio(ctx, s)

@@ -17,6 +17,7 @@ type SystemInfo struct {
 }
 
 func (t *Tools) SystemInfo(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, SystemInfo, error) {
+	startOperation(ctx)
 	var out SystemInfo
 	if err := ctx.Err(); err != nil {
 		return nil, out, err

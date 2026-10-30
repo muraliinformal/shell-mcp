@@ -7,21 +7,22 @@ import (
 	"net/http"
 	"time"
 
+	"example.com/shell-mcp/internal/audit"
 	"example.com/shell-mcp/internal/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func Handler(s *mcp.Server, token string) (http.Handler, error) {
+func Handler(s *mcp.Server, token string, logger *audit.Logger) (http.Handler, error) {
 	mux := http.NewServeMux()
-	handler, err := auth.Middleware(token, mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{SessionTimeout: 5 * time.Minute}))
+	handler, err := auth.Middleware(token, mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{SessionTimeout: 5 * time.Minute}), logger)
 	if err != nil {
 		return nil, err
 	}
 	mux.Handle("/mcp", handler)
 	return mux, nil
 }
-func HTTP(ctx context.Context, s *mcp.Server, address, token string) error {
-	handler, err := Handler(s, token)
+func HTTP(ctx context.Context, s *mcp.Server, address, token string, logger *audit.Logger) error {
+	handler, err := Handler(s, token, logger)
 	if err != nil {
 		return err
 	}

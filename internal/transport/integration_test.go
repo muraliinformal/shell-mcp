@@ -27,7 +27,7 @@ func TestSDKTransports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := transport.Handler(server.New(p, executor.Runner{}), "test-token")
+	handler, err := transport.Handler(server.New(p, executor.Runner{}, nil, "http", ""), "test-token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

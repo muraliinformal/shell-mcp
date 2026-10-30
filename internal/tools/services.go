@@ -23,7 +23,9 @@ func (t *Tools) ServiceStatus(ctx context.Context, _ *mcp.CallToolRequest, in Se
 	if err := policy.Service(in.Service); err != nil {
 		return nil, executor.Result{}, err
 	}
+	startOperation(ctx)
 	r, err := t.Runner.Run(ctx, "/usr/bin/systemctl", []string{"status", "--no-pager", "--", in.Service}, "")
+	commandOutcome(ctx, r, err)
 	return nil, r, err
 }
 func (t *Tools) ServiceLogs(ctx context.Context, _ *mcp.CallToolRequest, in LogsInput) (*mcp.CallToolResult, executor.Result, error) {
@@ -37,9 +39,12 @@ func (t *Tools) ServiceLogs(ctx context.Context, _ *mcp.CallToolRequest, in Logs
 	if lines < 1 || lines > 200 {
 		return nil, executor.Result{}, fmt.Errorf("lines must be between 1 and 200")
 	}
+	startOperation(ctx)
 	r, err := t.Runner.Run(ctx, "/usr/bin/journalctl", []string{"--no-pager", "--unit=" + in.Service, "--lines=" + strconv.Itoa(lines)}, "")
+	commandOutcome(ctx, r, err)
 	message := strings.ToLower(r.Stderr)
 	if strings.Contains(message, "permission") || strings.Contains(message, "not seeing messages") || strings.Contains(message, "access denied") {
+		operationError(ctx, "journal_access_denied")
 		return nil, r, fmt.Errorf("journal access denied or incomplete for server user; check journal permissions: %s", r.Stderr)
 	}
 	return nil, r, err

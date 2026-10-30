@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"example.com/shell-mcp/internal/audit"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,7 +21,7 @@ func Identity(ctx context.Context) (string, bool) {
 
 // Middleware requires bearer credentials for every request passed to next.
 // Hashing first makes the constant-time comparison independent of token length.
-func Middleware(token string, next http.Handler) (http.Handler, error) {
+func Middleware(token string, next http.Handler, logger *audit.Logger) (http.Handler, error) {
 	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, " \t\r\n") {
 		return nil, fmt.Errorf("SHELL_MCP_API_TOKEN must be nonempty and contain no whitespace")
 	}
@@ -35,6 +36,7 @@ func Middleware(token string, next http.Handler) (http.Handler, error) {
 		}
 		actual := sha256.Sum256([]byte(supplied))
 		if subtle.ConstantTimeCompare(actual[:], expected[:]) != 1 || !valid {
+			logger.Log(audit.Event{Event: "authentication_failed", RequestID: audit.RequestID(), Transport: "http", Status: "denied", Reason: "invalid_credentials"})
 			w.Header().Set("WWW-Authenticate", `Bearer realm="shell-mcp"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
